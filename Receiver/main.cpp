@@ -1,8 +1,6 @@
 #include <windows.h>
 #include <iostream>
 #include <fstream>
-#include <vector>
-#include <string>
 #include <sstream>
 #include "Message.h"
 
@@ -23,7 +21,7 @@ void createBinaryFile() {
     fstream file(filename, ios::out | ios::binary);
     Message msg;
     msg.isEmpty = true;
-    for (int i = 0; i < messageCount; i++) {
+    for (int i = 0; i < messageCount; ++i) {
         file.write((char*)&msg, sizeof(Message));
     }
     file.close();
@@ -31,9 +29,9 @@ void createBinaryFile() {
 
 void startSenders() {
     for (int i = 0; i < senderCount; ++i) {
-        wstringstream ss;
-        ss << L"EventReady_" << i;
-        readyEvents[i] = CreateEventW(NULL, TRUE, FALSE, ss.str().c_str());
+        wstringstream evName;
+        evName << L"EventReady_" << i;
+        readyEvents[i] = CreateEventW(NULL, TRUE, FALSE, evName.str().c_str());
 
         wstringstream cmd;
         cmd << L"Sender.exe " << filename.c_str() << L" " << i << L" " << messageCount;
@@ -42,51 +40,54 @@ void startSenders() {
         ZeroMemory(&senderInfos[i], sizeof(PROCESS_INFORMATION));
 
         if (!CreateProcessW(NULL, (LPWSTR)cmd.str().c_str(), NULL, NULL, FALSE, CREATE_NEW_CONSOLE, NULL, NULL, &si, &senderInfos[i])) {
-            cerr << "Failed to start Sender " << i << endl;
+            cerr << "[Receiver] Failed to start Sender " << i << endl;
         }
     }
 }
 
 void waitSendersReady() {
     WaitForMultipleObjects(senderCount, readyEvents, TRUE, INFINITE);
-    cout << "All Senders are ready." << endl;
+    cout << "[Receiver] All Senders are ready." << endl;
 }
 
-void readMessages() {
+void readMessage() {
     WaitForSingleObject(mutex, INFINITE);
 
     fstream file(filename, ios::in | ios::out | ios::binary);
-    int messagesRead = 0;
+    Message msg;
+    bool found = false;
+    int start = head;
 
     for (int i = 0; i < messageCount; ++i) {
-        file.seekg(head * sizeof(Message));
-        Message msg;
+        int pos = (start + i) % messageCount;
+        file.seekg(pos * sizeof(Message));
         file.read((char*)&msg, sizeof(Message));
 
-        if (msg.isEmpty) {
-        }
-        else {
+        if (!msg.isEmpty) {
             cout << "[Receiver] Message: " << msg.text << endl;
             msg.isEmpty = true;
-            file.seekp(head * sizeof(Message));
+            file.seekp(pos * sizeof(Message));
             file.write((char*)&msg, sizeof(Message));
-            messagesRead++;
+
+            head = (pos + 1) % messageCount;
+            found = true;
+            break;
         }
-        head = (head + 1) % messageCount;
+    }
+
+    if (!found) {
+        cout << "[Receiver] No new messages.\n";
     }
 
     file.close();
     ReleaseMutex(mutex);
-
-    if (messagesRead == 0) {
-        cout << "[Receiver] No new messages.\n";
-    }
 }
+
 
 int main() {
     cout << "Enter binary file name: ";
     cin >> filename;
-    cout << "Enter message slot count: ";
+    cout << "Enter number of message slots: ";
     cin >> messageCount;
 
     mutex = CreateMutexW(NULL, FALSE, MUTEX_NAME);
@@ -100,9 +101,9 @@ int main() {
 
     string cmd;
     while (true) {
-        cout << "Enter command (read/exit): ";
+        cout << "[Receiver] Enter command (read/exit): ";
         cin >> cmd;
-        if (cmd == "read") readMessages();
+        if (cmd == "read") readMessage();
         else if (cmd == "exit") break;
     }
 
@@ -111,6 +112,7 @@ int main() {
         CloseHandle(senderInfos[i].hProcess);
         CloseHandle(senderInfos[i].hThread);
     }
+
     CloseHandle(mutex);
     return 0;
 }
